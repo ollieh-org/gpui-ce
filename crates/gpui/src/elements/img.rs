@@ -351,32 +351,53 @@ impl Element for Img {
                                 style.aspect_ratio = Some(image_size.width / image_size.height);
                             }
 
-                            if let Length::Auto = style.size.width {
-                                style.size.width = match style.size.height {
-                                    Length::Definite(DefiniteLength::Absolute(abs_length)) => {
-                                        let height_px = abs_length.to_pixels(window.rem_size());
-                                        Length::Definite(
-                                            px(image_size.width.0 * height_px.0
-                                                / image_size.height.0)
-                                            .into(),
-                                        )
+                            if matches!(style.size.width, Length::Auto)
+                                && matches!(style.size.height, Length::Auto)
+                            {
+                                let mut scale = 1.0_f32;
+                                for (limit, intrinsic) in [
+                                    (style.max_size.width, image_size.width),
+                                    (style.max_size.height, image_size.height),
+                                ] {
+                                    if let Length::Definite(DefiniteLength::Absolute(limit)) = limit
+                                    {
+                                        scale = scale.min(
+                                            limit.to_pixels(window.rem_size()).0 / intrinsic.0,
+                                        );
                                     }
-                                    _ => Length::Definite(image_size.width.into()),
-                                };
-                            }
+                                }
+                                style.size.width =
+                                    Length::Definite((image_size.width * scale).into());
+                                // Leave height automatic so the aspect ratio also
+                                // follows narrower parent constraints during layout.
+                            } else {
+                                if let Length::Auto = style.size.width {
+                                    style.size.width = match style.size.height {
+                                        Length::Definite(DefiniteLength::Absolute(abs_length)) => {
+                                            let height_px = abs_length.to_pixels(window.rem_size());
+                                            Length::Definite(
+                                                px(image_size.width.0 * height_px.0
+                                                    / image_size.height.0)
+                                                .into(),
+                                            )
+                                        }
+                                        _ => Length::Definite(image_size.width.into()),
+                                    };
+                                }
 
-                            if let Length::Auto = style.size.height {
-                                style.size.height = match style.size.width {
-                                    Length::Definite(DefiniteLength::Absolute(abs_length)) => {
-                                        let width_px = abs_length.to_pixels(window.rem_size());
-                                        Length::Definite(
-                                            px(image_size.height.0 * width_px.0
-                                                / image_size.width.0)
-                                            .into(),
-                                        )
-                                    }
-                                    _ => Length::Definite(image_size.height.into()),
-                                };
+                                if let Length::Auto = style.size.height {
+                                    style.size.height = match style.size.width {
+                                        Length::Definite(DefiniteLength::Absolute(abs_length)) => {
+                                            let width_px = abs_length.to_pixels(window.rem_size());
+                                            Length::Definite(
+                                                px(image_size.height.0 * width_px.0
+                                                    / image_size.width.0)
+                                                .into(),
+                                            )
+                                        }
+                                        _ => Length::Definite(image_size.height.into()),
+                                    };
+                                }
                             }
 
                             if global_id.is_some()
