@@ -20,6 +20,7 @@ custom-gpu = ["gpui/custom-gpu"]
 wgpu-surfaces = ["gpui/wgpu-surfaces"]
 
 [dependencies]
+unicode-properties = { version = "0.1.4", features = ["emoji"] }
 gpui = { path = "../gpui", version = "0.2.2", package = "gpui-ce", default-features = false }
 gpui_render.workspace = true
 anyhow.workspace = true

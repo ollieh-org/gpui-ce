@@ -2350,10 +2350,17 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                     _ => 1.0,
                 };
                 state.scroll_event_received = true;
+                // Match browser-like touchpad travel without changing wheel or
+                // other continuous scrolling devices.
+                let modifier = if state.axis_source == AxisSource::Finger {
+                    12.0
+                } else {
+                    3.0
+                };
                 let scroll_delta = state
                     .continuous_scroll_delta
                     .get_or_insert(point(px(0.0), px(0.0)));
-                let modifier = 3.0;
+
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
                         scroll_delta.y += px(value as f32 * modifier * axis_modifier);

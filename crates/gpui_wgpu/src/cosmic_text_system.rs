@@ -19,6 +19,7 @@ use swash::{
     scale::{Render, ScaleContext, Source, StrikeWith},
     zeno::{Format, Vector},
 };
+use unicode_properties::emoji::{EmojiStatus, UnicodeEmoji as _};
 use unicode_segmentation::UnicodeSegmentation;
 
 pub struct CosmicTextSystem(RwLock<CosmicTextSystemState>);
@@ -661,12 +662,18 @@ impl CosmicTextSystemState {
             } else {
                 let loaded_fonts = &self.loaded_fonts;
                 let covers = |id: FontId, ch: char| charmap_covers(loaded_fonts, id, ch);
-                compute_run_spans(
+                let emoji_fallback_slot = properties.fallback_chain.iter().position(|(id, _)| {
+                    loaded_fonts
+                        .get(id.0)
+                        .is_some_and(|font| font.is_known_emoji_font)
+                });
+                compute_run_spans_with_emoji_fallback(
                     text,
                     offs,
                     run.len,
                     run.font_id,
                     &properties.fallback_chain,
+                    emoji_fallback_slot,
                     &covers,
                 )
             };
@@ -893,15 +900,38 @@ struct RunSpan {
     font_id: FontId,
 }
 
-/// walks `text[run_offset..run_offset + run_len]` and groups codepoints into
-/// spans. inheriting codepoints stay in the current span so shaping clusters
-/// like emoji zwj sequences and combining marks are not torn apart.
+#[cfg(test)]
 fn compute_run_spans(
     text: &str,
     run_offset: usize,
     run_len: usize,
     primary: FontId,
     fallback_chain: &[(FontId, SharedString)],
+    covers: &impl Fn(FontId, char) -> bool,
+) -> SmallVec<[RunSpan; 4]> {
+    compute_run_spans_with_emoji_fallback(
+        text,
+        run_offset,
+        run_len,
+        primary,
+        fallback_chain,
+        None,
+        covers,
+    )
+}
+
+/// Walks `text[run_offset..run_offset + run_len]` and groups graphemes into
+/// spans. Inheriting codepoints stay in the current span so shaping clusters
+/// like emoji ZWJ sequences and combining marks are not torn apart. Emoji
+/// presentation graphemes prefer the configured color emoji fallback even if
+/// the primary text font also contains a monochrome glyph for their base.
+fn compute_run_spans_with_emoji_fallback(
+    text: &str,
+    run_offset: usize,
+    run_len: usize,
+    primary: FontId,
+    fallback_chain: &[(FontId, SharedString)],
+    emoji_fallback_slot: Option<usize>,
     covers: &impl Fn(FontId, char) -> bool,
 ) -> SmallVec<[RunSpan; 4]> {
     let mut spans = SmallVec::new();
@@ -925,7 +955,11 @@ fn compute_run_spans(
     for (grapheme_idx, grapheme) in run_text.grapheme_indices(true) {
         let abs = run_offset + grapheme_idx;
         let ch = grapheme.chars().next().unwrap_or('\0');
-        let next_slot = pick_covering_slot(ch, span_slot, primary, fallback_chain, covers);
+        let next_slot = emoji_fallback_slot
+            .filter(|slot| {
+                grapheme_prefers_emoji_presentation(grapheme) && covers(fallback_chain[*slot].0, ch)
+            })
+            .or_else(|| pick_covering_slot(ch, span_slot, primary, fallback_chain, covers));
         if next_slot == span_slot {
             continue;
         }
@@ -980,10 +1014,28 @@ fn pick_covering_slot(
     if covers(current_id, ch) {
         return current;
     }
-
     fallback_chain
         .iter()
         .position(|(fb_id, _)| covers(*fb_id, ch))
+}
+
+fn grapheme_prefers_emoji_presentation(grapheme: &str) -> bool {
+    if grapheme.contains('\u{FE0E}') {
+        return false;
+    }
+    if grapheme.contains('\u{FE0F}') {
+        return true;
+    }
+
+    grapheme.chars().next().is_some_and(|ch| {
+        matches!(
+            ch.emoji_status(),
+            EmojiStatus::EmojiPresentation
+                | EmojiStatus::EmojiPresentationAndModifierBase
+                | EmojiStatus::EmojiPresentationAndEmojiComponent
+                | EmojiStatus::EmojiPresentationAndModifierAndEmojiComponent
+        )
+    })
 }
 
 fn charmap_covers(loaded_fonts: &[LoadedFont], id: FontId, ch: char) -> bool {
@@ -1048,7 +1100,7 @@ fn face_info_into_properties(
 
 fn check_is_known_emoji_font(postscript_name: &str) -> bool {
     // TODO: Include other common emoji fonts
-    postscript_name == "NotoColorEmoji"
+    matches!(postscript_name, "NotoColorEmoji" | "TwemojiMozilla")
 }
 
 #[cfg(test)]
